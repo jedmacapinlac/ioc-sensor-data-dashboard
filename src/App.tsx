@@ -88,6 +88,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('wells')
   const [frequency, setFrequency] = useState<Frequency>('1h')
   const [selectedSensor, setSelectedSensor] = useState<string>('')
+  const [lookupDatetime, setLookupDatetime] = useState<string>('')
+  const [viewMode, setViewMode] = useState<'charts' | 'table'>('charts')
 
   const hasWells = WELLS_SITES.includes(selectedSite)
   const effectiveTab: Tab = (!hasWells && activeTab === 'wells') ? 'river' : activeTab
@@ -138,6 +140,23 @@ export default function App() {
 
   const chartData = useMemo(() => downsample(roundedData, MAX_CHART_POINTS), [roundedData])
 
+  const lookupResult = useMemo(() => {
+    if (!lookupDatetime || !fullData.length) return null
+    const target = new Date(lookupDatetime).getTime()
+    let closest = fullData[0]
+    let closestDiff = Infinity
+    for (const row of fullData) {
+      const dt = new Date(row.reading_datetime).getTime()
+      const diff = Math.abs(dt - target)
+      if (diff < closestDiff) {
+        closestDiff = diff
+        closest = row
+      }
+    }
+    const diffMins = Math.round(closestDiff / 60000)
+    return { data: closest, diffMins }
+  }, [lookupDatetime, fullData])
+
   const fmt = (v: number, d = 2) => v != null ? v.toFixed(d) : 'N/A'
   const min = (arr: number[]) => arr.length ? Math.min(...arr) : 0
   const max = (arr: number[]) => arr.length ? Math.max(...arr) : 0
@@ -163,18 +182,38 @@ export default function App() {
 
         <div className="flex flex-col gap-5">
           <div>
-            <label className="block text-[11px] font-medium text-stone-400 uppercase tracking-wider mb-1.5">Site</label>
-            <select
-              className="w-full bg-stone-700 border border-stone-600 rounded-lg px-3 py-2 text-sm text-stone-100 focus:outline-none focus:border-green-500 transition"
-              value={selectedSite}
-              onChange={e => { setSelectedSite(e.target.value); setActiveTab('wells'); setSelectedSensor('') }}
-            >
-              <option value="">Select site...</option>
-              {sites.map(site => <option key={site} value={site}>{site}</option>)}
-            </select>
+            <label className="block text-[11px] font-medium text-stone-400 uppercase tracking-wider mb-1.5">Data Source</label>
+            <div className="flex flex-col gap-1">
+              <button
+                onClick={() => { setActiveTab('wells'); setSelectedSite('KBWOZS'); setSelectedSensor('') }}
+                className={`text-left px-3 py-2 rounded-lg text-sm transition ${effectiveTab === 'wells' ? 'bg-green-800/40 text-green-300 font-medium' : 'text-stone-400 hover:bg-stone-700 hover:text-stone-200'}`}
+              >
+                Wells (KBWOZS)
+              </button>
+              <button
+                onClick={() => { setActiveTab('river'); setSelectedSite(''); setSelectedSensor('') }}
+                className={`text-left px-3 py-2 rounded-lg text-sm transition ${effectiveTab === 'river' ? 'bg-green-800/40 text-green-300 font-medium' : 'text-stone-400 hover:bg-stone-700 hover:text-stone-200'}`}
+              >
+                Rivers
+              </button>
+            </div>
           </div>
 
-          {hasWells && sensors.length > 0 && (
+          {effectiveTab === 'river' && (
+            <div>
+              <label className="block text-[11px] font-medium text-stone-400 uppercase tracking-wider mb-1.5">Site</label>
+              <select
+                className="w-full bg-stone-700 border border-stone-600 rounded-lg px-3 py-2 text-sm text-stone-100 focus:outline-none focus:border-green-500 transition"
+                value={selectedSite}
+                onChange={e => { setSelectedSite(e.target.value); setSelectedSensor('') }}
+              >
+                <option value="">Select site...</option>
+                {sites.map(site => <option key={site} value={site}>{site}</option>)}
+              </select>
+            </div>
+          )}
+
+          {effectiveTab === 'wells' && hasWells && sensors.length > 0 && (
             <div>
               <label className="block text-[11px] font-medium text-stone-400 uppercase tracking-wider mb-1.5">Sensor</label>
               <select
@@ -218,23 +257,38 @@ export default function App() {
           </div>
         </div>
 
-        {selectedSite && (
-          <div className="flex flex-col gap-1">
-            <label className="block text-[11px] font-medium text-stone-400 uppercase tracking-wider mb-1">Data Source</label>
-            {hasWells && (
-              <button
-                onClick={() => setActiveTab('wells')}
-                className={`text-left px-3 py-2 rounded-lg text-sm transition ${effectiveTab === 'wells' ? 'bg-green-800/40 text-green-300 font-medium' : 'text-stone-400 hover:bg-stone-700 hover:text-stone-200'}`}
-              >
-                Wells / Telemetered
+
+        {fullData.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <label className="block text-[11px] font-medium text-stone-400 uppercase tracking-wider">Lookup Point</label>
+            <input
+              type="datetime-local"
+              className="w-full bg-stone-700 border border-stone-600 rounded-lg px-3 py-2 text-sm text-stone-100 focus:outline-none focus:border-green-500 transition"
+              value={lookupDatetime}
+              onChange={e => setLookupDatetime(e.target.value)}
+            />
+            {lookupResult && (
+              <div className="bg-stone-700/50 rounded-lg p-3 text-xs space-y-1">
+                <p className="text-stone-400">
+                  Closest: <span className="text-stone-200">{lookupResult.data.reading_datetime}</span>
+                </p>
+                <p className="text-stone-500">{lookupResult.diffMins} min from requested</p>
+                <hr className="border-stone-600 my-1" />
+                {Object.entries(lookupResult.data)
+                  .filter(([k]) => k !== 'reading_datetime' && k !== 'sensor_id')
+                  .map(([k, v]) => (
+                    <p key={k} className="flex justify-between">
+                      <span className="text-stone-400">{k}</span>
+                      <span className="text-stone-200">{typeof v === 'number' ? v.toFixed(3) : String(v)}</span>
+                    </p>
+                  ))}
+              </div>
+            )}
+            {lookupDatetime && (
+              <button className="text-xs text-stone-500 hover:text-stone-300 transition" onClick={() => setLookupDatetime('')}>
+                Clear lookup
               </button>
             )}
-            <button
-              onClick={() => setActiveTab('river')}
-              className={`text-left px-3 py-2 rounded-lg text-sm transition ${effectiveTab === 'river' ? 'bg-green-800/40 text-green-300 font-medium' : 'text-stone-400 hover:bg-stone-700 hover:text-stone-200'}`}
-            >
-              River / Combined
-            </button>
           </div>
         )}
 
@@ -316,13 +370,61 @@ export default function App() {
               )
             })()}
 
+            {/* View toggle */}
+            {activeData.length > 0 && (
+              <div className="flex gap-2 mb-6">
+                <button
+                  onClick={() => setViewMode('charts')}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition ${viewMode === 'charts' ? 'bg-green-700 text-green-100' : 'bg-stone-800 text-stone-400 hover:text-stone-200'}`}
+                >
+                  Charts
+                </button>
+                <button
+                  onClick={() => setViewMode('table')}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition ${viewMode === 'table' ? 'bg-green-700 text-green-100' : 'bg-stone-800 text-stone-400 hover:text-stone-200'}`}
+                >
+                  Table
+                </button>
+              </div>
+            )}
+
+            {/* Table view */}
+            {viewMode === 'table' && activeData.length > 0 && (
+              <div className="bg-stone-800/60 rounded-2xl border border-stone-700/50 shadow-2xl shadow-black/40 overflow-hidden">
+                <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-stone-800">
+                      <tr>
+                        {Object.keys(activeData[0]).filter(k => k !== 'sensor_id').map(col => (
+                          <th key={col} className="px-4 py-3 text-left text-[11px] font-medium text-stone-400 uppercase tracking-wider whitespace-nowrap border-b border-stone-700">
+                            {col}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeData.map((row: any, i: number) => (
+                        <tr key={i} className={i % 2 === 0 ? 'bg-stone-800/30' : ''}>
+                          {Object.entries(row).filter(([k]) => k !== 'sensor_id').map(([k, v]) => (
+                            <td key={k} className="px-4 py-2 text-stone-300 whitespace-nowrap border-b border-stone-800">
+                              {typeof v === 'number' ? v.toFixed(3) : String(v ?? '')}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {/* Charts — Wells */}
-            {effectiveTab === 'wells' && activeData.length > 0 && (
+            {viewMode === 'charts' && effectiveTab === 'wells' && activeData.length > 0 && (
               <div className="flex flex-col gap-6">
                 <ChartCard title="Compensated Level (m)" color="text-sky-400">
                   <ResponsiveContainer width="100%" height={280}>
                     <AreaChart data={chartData}>
-                      <defs><linearGradient id="levelGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0284c7" stopOpacity={0.25} /><stop offset="95%" stopColor="#0284c7" stopOpacity={0} /></linearGradient></defs>
+                      <defs><linearGradient id="levelGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0284c7" stopOpacity={0.5} /><stop offset="100%" stopColor="#0284c7" stopOpacity={0.05} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                       <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
@@ -335,7 +437,7 @@ export default function App() {
                 <ChartCard title="Temperature (C)" color="text-green-400">
                   <ResponsiveContainer width="100%" height={280}>
                     <AreaChart data={chartData}>
-                      <defs><linearGradient id="tempGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#15803d" stopOpacity={0.25} /><stop offset="95%" stopColor="#15803d" stopOpacity={0} /></linearGradient></defs>
+                      <defs><linearGradient id="tempGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#15803d" stopOpacity={0.5} /><stop offset="100%" stopColor="#15803d" stopOpacity={0.05} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                       <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
@@ -348,7 +450,7 @@ export default function App() {
                 <ChartCard title="Specific Conductance (mS/cm)" color="text-amber-400">
                   <ResponsiveContainer width="100%" height={280}>
                     <AreaChart data={chartData}>
-                      <defs><linearGradient id="spcGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#b45309" stopOpacity={0.25} /><stop offset="95%" stopColor="#b45309" stopOpacity={0} /></linearGradient></defs>
+                      <defs><linearGradient id="spcGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#b45309" stopOpacity={0.5} /><stop offset="100%" stopColor="#b45309" stopOpacity={0.05} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                       <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
@@ -361,12 +463,12 @@ export default function App() {
                 <ChartCard title="GW Elevation (masl)" color="text-teal-400">
                   <ResponsiveContainer width="100%" height={280}>
                     <AreaChart data={chartData}>
-                      <defs><linearGradient id="gwGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#2dd4bf" stopOpacity={0.25} /><stop offset="95%" stopColor="#2dd4bf" stopOpacity={0} /></linearGradient></defs>
+                      <defs><linearGradient id="gwGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#2dd4bf" stopOpacity={0.5} /><stop offset="100%" stopColor="#2dd4bf" stopOpacity={0.05} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                       <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
                       <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
-                      <Area type="monotone" dataKey="gw_elevation_masl" stroke="#2dd4bf" fill="url(#gwGrad)" strokeWidth={1.5} dot={false} />
+                      <Area type="monotone" dataKey="gw_elevation_masl" stroke="#2dd4bf" fill="url(#gwGrad)" strokeWidth={1.5} dot={false} baseValue="dataMin" />
                     </AreaChart>
                   </ResponsiveContainer>
                 </ChartCard>
@@ -374,7 +476,7 @@ export default function App() {
                 <ChartCard title="Barometric Pressure (mbar)" color="text-stone-400">
                   <ResponsiveContainer width="100%" height={280}>
                     <AreaChart data={chartData}>
-                      <defs><linearGradient id="baroGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#78716c" stopOpacity={0.25} /><stop offset="95%" stopColor="#78716c" stopOpacity={0} /></linearGradient></defs>
+                      <defs><linearGradient id="baroGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#78716c" stopOpacity={0.5} /><stop offset="100%" stopColor="#78716c" stopOpacity={0.05} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                       <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
@@ -387,12 +489,12 @@ export default function App() {
             )}
 
             {/* Charts — River */}
-            {effectiveTab === 'river' && activeData.length > 0 && (
+            {viewMode === 'charts' && effectiveTab === 'river' && activeData.length > 0 && (
               <div className="flex flex-col gap-6">
                 <ChartCard title="Stage (m)" color="text-sky-400">
                   <ResponsiveContainer width="100%" height={280}>
                     <AreaChart data={chartData}>
-                      <defs><linearGradient id="stageGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0284c7" stopOpacity={0.25} /><stop offset="95%" stopColor="#0284c7" stopOpacity={0} /></linearGradient></defs>
+                      <defs><linearGradient id="stageGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0284c7" stopOpacity={0.5} /><stop offset="100%" stopColor="#0284c7" stopOpacity={0.05} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                       <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
@@ -405,7 +507,7 @@ export default function App() {
                 <ChartCard title="Temperature (C)" color="text-green-400">
                   <ResponsiveContainer width="100%" height={280}>
                     <AreaChart data={chartData}>
-                      <defs><linearGradient id="rtempGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#15803d" stopOpacity={0.25} /><stop offset="95%" stopColor="#15803d" stopOpacity={0} /></linearGradient></defs>
+                      <defs><linearGradient id="rtempGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#15803d" stopOpacity={0.5} /><stop offset="100%" stopColor="#15803d" stopOpacity={0.05} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                       <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
@@ -418,7 +520,7 @@ export default function App() {
                 <ChartCard title="Specific Conductance (mS/cm)" color="text-amber-400">
                   <ResponsiveContainer width="100%" height={280}>
                     <AreaChart data={chartData}>
-                      <defs><linearGradient id="rspcGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#b45309" stopOpacity={0.25} /><stop offset="95%" stopColor="#b45309" stopOpacity={0} /></linearGradient></defs>
+                      <defs><linearGradient id="rspcGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#b45309" stopOpacity={0.5} /><stop offset="100%" stopColor="#b45309" stopOpacity={0.05} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                       <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
@@ -431,7 +533,7 @@ export default function App() {
                 <ChartCard title="Barometric Pressure (mbar)" color="text-stone-400">
                   <ResponsiveContainer width="100%" height={280}>
                     <AreaChart data={chartData}>
-                      <defs><linearGradient id="rbaroGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#78716c" stopOpacity={0.25} /><stop offset="95%" stopColor="#78716c" stopOpacity={0} /></linearGradient></defs>
+                      <defs><linearGradient id="rbaroGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#78716c" stopOpacity={0.5} /><stop offset="100%" stopColor="#78716c" stopOpacity={0.05} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                       <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
