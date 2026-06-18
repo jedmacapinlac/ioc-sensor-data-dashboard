@@ -7,7 +7,7 @@ type Tab = 'river' | 'wells'
 type Frequency = '15m' | '1h' | '1d' | '1w'
 
 const WELLS_SITES = ['KBWOZS']
-const MAX_CHART_POINTS = 500
+const MAX_CHART_POINTS = 1000
 
 function downsample<T>(data: T[], maxPoints: number): T[] {
   if (data.length <= maxPoints) return data
@@ -52,7 +52,7 @@ function aggregateByWeek(data: any[]): any[] {
     groups[weekKey].push(row)
   }
   return Object.entries(groups).map(([week, rows]) => {
-    const result: any = { reading_datetime: `Week of ${week}` }
+    const result: any = { reading_datetime: week }
     const numericKeys = Object.keys(rows[0]).filter(k => k !== 'reading_datetime' && typeof rows[0][k] === 'number')
     for (const key of numericKeys) {
       const vals = rows.map(r => r[key]).filter((v: any) => v != null)
@@ -92,6 +92,7 @@ export default function App() {
   const hasWells = WELLS_SITES.includes(selectedSite)
   const effectiveTab: Tab = (!hasWells && activeTab === 'wells') ? 'river' : activeTab
   const hasDates = !!startDate && !!endDate
+  const hasSensor = effectiveTab === 'river' || !!selectedSensor
 
   const { data: sites = [] } = useQuery({ queryKey: ['sites'], queryFn: getSites })
 
@@ -110,7 +111,7 @@ export default function App() {
   const { data: wells = [], isLoading: loadingWells } = useQuery({
     queryKey: ['wells', selectedSite, selectedSensor, startDate, endDate],
     queryFn: () => getWells(selectedSite, selectedSensor || undefined, startDate || undefined, endDate || undefined),
-    enabled: !!selectedSite && hasDates && effectiveTab === 'wells' && hasWells,
+    enabled: !!selectedSite && hasDates && !!selectedSensor && effectiveTab === 'wells' && hasWells,
   })
 
   const isLoading = loadingRiver || loadingWells
@@ -143,6 +144,7 @@ export default function App() {
   const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0
 
   const tooltipStyle = { backgroundColor: '#292524', border: '1px solid #44403c', borderRadius: '8px', color: '#d6d3d1' }
+  const tooltipFormatter = (value: any) => typeof value === 'number' ? value.toFixed(3) : value
 
   const tickFormat = (v: string) => {
     if (frequency === '15m' || frequency === '1h') return v.slice(11, 16) || v.slice(0, 10)
@@ -180,7 +182,7 @@ export default function App() {
                 value={selectedSensor}
                 onChange={e => setSelectedSensor(e.target.value)}
               >
-                <option value="">All sensors</option>
+                <option value="">Select sensor...</option>
                 {sensors.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
@@ -244,22 +246,24 @@ export default function App() {
       {/* Main content */}
       <main className="flex-1 p-8 overflow-auto">
 
-        {(!selectedSite || !hasDates) && (
+        {(!selectedSite || !hasDates || !hasSensor) && (
           <div className="flex items-center justify-center h-full text-stone-400">
             <div className="text-center">
               <p className="text-xl font-medium text-stone-500 mb-2">
-                {!selectedSite ? 'No site selected' : 'Select a date range'}
+                {!selectedSite ? 'No site selected' : !hasDates ? 'Select a date range' : 'Select a sensor'}
               </p>
               <p className="text-sm text-stone-400">
                 {!selectedSite
                   ? 'Choose a site from the sidebar to get started.'
-                  : 'Pick a start and end date to view sensor data.'}
+                  : !hasDates
+                  ? 'Pick a start and end date to view sensor data.'
+                  : 'Choose a sensor from the sidebar to view well data.'}
               </p>
             </div>
           </div>
         )}
 
-        {selectedSite && hasDates && (
+        {selectedSite && hasDates && hasSensor && (
           <>
             {/* Top bar */}
             <div className="flex items-baseline justify-between mb-6">
@@ -321,8 +325,8 @@ export default function App() {
                       <defs><linearGradient id="levelGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0284c7" stopOpacity={0.25} /><stop offset="95%" stopColor="#0284c7" stopOpacity={0} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
-                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} />
-                      <Tooltip contentStyle={tooltipStyle} labelFormatter={v => `${v}`} />
+                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} labelFormatter={v => `${v}`} />
                       <Area type="monotone" dataKey="compensated_level_m" stroke="#0284c7" fill="url(#levelGrad)" strokeWidth={1.5} dot={false} />
                     </AreaChart>
                   </ResponsiveContainer>
@@ -334,8 +338,8 @@ export default function App() {
                       <defs><linearGradient id="tempGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#15803d" stopOpacity={0.25} /><stop offset="95%" stopColor="#15803d" stopOpacity={0} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
-                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} />
-                      <Tooltip contentStyle={tooltipStyle} />
+                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
                       <Area type="monotone" dataKey="temperature_c" stroke="#15803d" fill="url(#tempGrad)" strokeWidth={1.5} dot={false} />
                     </AreaChart>
                   </ResponsiveContainer>
@@ -347,8 +351,8 @@ export default function App() {
                       <defs><linearGradient id="spcGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#b45309" stopOpacity={0.25} /><stop offset="95%" stopColor="#b45309" stopOpacity={0} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
-                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} />
-                      <Tooltip contentStyle={tooltipStyle} />
+                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
                       <Area type="monotone" dataKey="specific_conductance_ms_cm" stroke="#b45309" fill="url(#spcGrad)" strokeWidth={1.5} dot={false} />
                     </AreaChart>
                   </ResponsiveContainer>
@@ -360,8 +364,8 @@ export default function App() {
                       <defs><linearGradient id="gwGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#2dd4bf" stopOpacity={0.25} /><stop offset="95%" stopColor="#2dd4bf" stopOpacity={0} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
-                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} />
-                      <Tooltip contentStyle={tooltipStyle} />
+                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
                       <Area type="monotone" dataKey="gw_elevation_masl" stroke="#2dd4bf" fill="url(#gwGrad)" strokeWidth={1.5} dot={false} />
                     </AreaChart>
                   </ResponsiveContainer>
@@ -373,8 +377,8 @@ export default function App() {
                       <defs><linearGradient id="baroGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#78716c" stopOpacity={0.25} /><stop offset="95%" stopColor="#78716c" stopOpacity={0} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
-                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} />
-                      <Tooltip contentStyle={tooltipStyle} />
+                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
                       <Area type="monotone" dataKey="barometer_mbar" stroke="#78716c" fill="url(#baroGrad)" strokeWidth={1.5} dot={false} />
                     </AreaChart>
                   </ResponsiveContainer>
@@ -391,8 +395,8 @@ export default function App() {
                       <defs><linearGradient id="stageGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0284c7" stopOpacity={0.25} /><stop offset="95%" stopColor="#0284c7" stopOpacity={0} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
-                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} />
-                      <Tooltip contentStyle={tooltipStyle} labelFormatter={v => `${v}`} />
+                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} labelFormatter={v => `${v}`} />
                       <Area type="monotone" dataKey="stage_m" stroke="#0284c7" fill="url(#stageGrad)" strokeWidth={1.5} dot={false} />
                     </AreaChart>
                   </ResponsiveContainer>
@@ -404,8 +408,8 @@ export default function App() {
                       <defs><linearGradient id="rtempGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#15803d" stopOpacity={0.25} /><stop offset="95%" stopColor="#15803d" stopOpacity={0} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
-                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} />
-                      <Tooltip contentStyle={tooltipStyle} />
+                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
                       <Area type="monotone" dataKey="temp_c_river" stroke="#15803d" fill="url(#rtempGrad)" strokeWidth={1.5} dot={false} />
                     </AreaChart>
                   </ResponsiveContainer>
@@ -417,8 +421,8 @@ export default function App() {
                       <defs><linearGradient id="rspcGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#b45309" stopOpacity={0.25} /><stop offset="95%" stopColor="#b45309" stopOpacity={0} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
-                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} />
-                      <Tooltip contentStyle={tooltipStyle} />
+                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
                       <Area type="monotone" dataKey="specific_conductance_ms_cm" stroke="#b45309" fill="url(#rspcGrad)" strokeWidth={1.5} dot={false} />
                     </AreaChart>
                   </ResponsiveContainer>
@@ -430,8 +434,8 @@ export default function App() {
                       <defs><linearGradient id="rbaroGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#78716c" stopOpacity={0.25} /><stop offset="95%" stopColor="#78716c" stopOpacity={0} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
                       <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
-                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} />
-                      <Tooltip contentStyle={tooltipStyle} />
+                      <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
                       <Area type="monotone" dataKey="abs_pres_mbar" stroke="#78716c" fill="url(#rbaroGrad)" strokeWidth={1.5} dot={false} />
                     </AreaChart>
                   </ResponsiveContainer>
