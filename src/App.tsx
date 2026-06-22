@@ -1,9 +1,9 @@
-import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
-import { getSites, getSensors, getReadings, getWells } from './api'
+import { getSites, getSensors, getReadings, getWells, getS3Inbox, runMainPipeline, runManualPipeline, getPipelineStatus, getPipelineRuns, getGdriveFolders, getGdriveFiles } from './api'
 
-type Tab = 'river' | 'wells'
+type Tab = 'river' | 'wells' | 'pipeline'
 type Frequency = '15m' | '1h' | '1d' | '1w'
 
 const WELLS_SITES = ['KBWOZS']
@@ -90,9 +90,11 @@ export default function App() {
   const [selectedSensor, setSelectedSensor] = useState<string>('')
   const [lookupDatetime, setLookupDatetime] = useState<string>('')
   const [viewMode, setViewMode] = useState<'charts' | 'table'>('charts')
+  const [activeRunId, setActiveRunId] = useState<string | null>(null)
 
+  const queryClient = useQueryClient()
   const hasWells = WELLS_SITES.includes(selectedSite)
-  const effectiveTab: Tab = (!hasWells && activeTab === 'wells') ? 'river' : activeTab
+  const effectiveTab: Tab = (activeTab === 'pipeline') ? 'pipeline' : (!hasWells && activeTab === 'wells') ? 'river' : activeTab
   const hasDates = !!startDate && !!endDate
   const hasSensor = effectiveTab === 'river' || !!selectedSensor
 
@@ -114,6 +116,12 @@ export default function App() {
     queryKey: ['wells', selectedSite, selectedSensor, startDate, endDate],
     queryFn: () => getWells(selectedSite, selectedSensor || undefined, startDate || undefined, endDate || undefined),
     enabled: !!selectedSite && hasDates && !!selectedSensor && effectiveTab === 'wells' && hasWells,
+  })
+
+  const { data: s3Inbox } = useQuery({
+    queryKey: ['s3-inbox'],
+    queryFn: getS3Inbox,
+    enabled: effectiveTab === 'pipeline',
   })
 
   const isLoading = loadingRiver || loadingWells
@@ -195,6 +203,12 @@ export default function App() {
                 className={`text-left px-3 py-2 rounded-lg text-sm transition ${effectiveTab === 'river' ? 'bg-green-800/40 text-green-300 font-medium' : 'text-stone-400 hover:bg-stone-700 hover:text-stone-200'}`}
               >
                 Rivers
+              </button>
+              <button
+                onClick={() => setActiveTab('pipeline')}
+                className={`text-left px-3 py-2 rounded-lg text-sm transition ${effectiveTab === 'pipeline' ? 'bg-green-800/40 text-green-300 font-medium' : 'text-stone-400 hover:bg-stone-700 hover:text-stone-200'}`}
+              >
+                Pipeline
               </button>
             </div>
           </div>
@@ -300,7 +314,7 @@ export default function App() {
       {/* Main content */}
       <main className="flex-1 p-8 overflow-auto">
 
-        {(!selectedSite || !hasDates || !hasSensor) && (
+        {effectiveTab !== 'pipeline' && (!selectedSite || !hasDates || !hasSensor) && (
           <div className="flex items-center justify-center h-full text-stone-400">
             <div className="text-center">
               <p className="text-xl font-medium text-stone-500 mb-2">
@@ -317,7 +331,7 @@ export default function App() {
           </div>
         )}
 
-        {selectedSite && hasDates && hasSensor && (
+        {effectiveTab !== 'pipeline' && selectedSite && hasDates && hasSensor && (
           <>
             {/* Top bar */}
             <div className="flex items-baseline justify-between mb-6">
@@ -549,6 +563,72 @@ export default function App() {
               <p className="text-stone-400 text-center mt-16">No readings found for {selectedSite} in this date range.</p>
             )}
           </>
+        )}
+
+        {effectiveTab === 'pipeline' && (
+          <div className="space-y-6">
+            <h2 className="text-xl font-bold text-stone-100">Pipeline Control</h2>
+
+            {/* Section 1: S3 Inbox */}
+            <div className="bg-stone-800/60 rounded-2xl p-5 border border-stone-700/50">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold text-sky-400 uppercase tracking-wider">S3 Inbox — Unprocessed Files</h3>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => queryClient.invalidateQueries({ queryKey: ['s3-inbox'] })}
+                    className="px-3 py-1.5 bg-stone-700 hover:bg-stone-600 text-stone-300 text-xs rounded-lg transition"
+                  >
+                    Refresh
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!confirm('Run the automated pipeline? This will process all files in the inbox.')) return
+                      const res = await runMainPipeline()
+                      setActiveRunId(res.run_id)
+                    }}
+                    disabled={!s3Inbox?.files?.length}
+                    className="px-3 py-1.5 bg-green-700 hover:bg-green-600 disabled:bg-stone-700 disabled:text-stone-500 text-green-100 text-xs rounded-lg transition"
+                  >
+                    Run Automated Pipeline
+                  </button>
+                </div>
+              </div>
+              {s3Inbox?.files?.length > 0 ? (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-stone-500 text-xs uppercase tracking-wider">
+                      <th className="pb-2">Filename</th>
+                      <th className="pb-2">Size</th>
+                      <th className="pb-2">Uploaded</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {s3Inbox.files.map((f: any) => (
+                      <tr key={f.filename} className="border-t border-stone-700/50">
+                        <td className="py-2 text-stone-200 font-mono text-xs">{f.filename}</td>
+                        <td className="py-2 text-stone-400">{f.size_kb} KB</td>
+                        <td className="py-2 text-stone-400">{new Date(f.last_modified).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="text-stone-500 text-sm">No unprocessed files in the inbox.</p>
+              )}
+            </div>
+
+            {/* Section 2: Google Drive Browser */}
+            <div className="bg-stone-800/60 rounded-2xl p-5 border border-stone-700/50">
+              <h3 className="text-sm font-semibold text-amber-400 uppercase tracking-wider mb-4">Google Drive Browser</h3>
+              <p className="text-stone-500 text-sm">Coming next...</p>
+            </div>
+
+            {/* Section 3: Pipeline Runs */}
+            <div className="bg-stone-800/60 rounded-2xl p-5 border border-stone-700/50">
+              <h3 className="text-sm font-semibold text-green-400 uppercase tracking-wider mb-4">Pipeline Runs</h3>
+              <p className="text-stone-500 text-sm">Coming next...</p>
+            </div>
+          </div>
         )}
       </main>
     </div>
