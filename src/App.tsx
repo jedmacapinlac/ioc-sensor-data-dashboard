@@ -124,6 +124,30 @@ export default function App() {
     enabled: effectiveTab === 'pipeline',
   })
 
+  // GDrive browser state
+  const [gdSensorType, setGdSensorType] = useState('')
+  const [gdSite, setGdSite] = useState('')
+  const [gdYear, setGdYear] = useState('')
+  const [gdFolderType, setGdFolderType] = useState('')
+
+  const { data: gdriveFolders } = useQuery({
+    queryKey: ['gdrive-folders'],
+    queryFn: getGdriveFolders,
+    enabled: effectiveTab === 'pipeline',
+  })
+
+  // Derive dropdown options from the folder structure
+  const gdSensorTypes = gdriveFolders ? Object.keys(gdriveFolders) : []
+  const gdSites = (gdriveFolders && gdSensorType) ? Object.keys(gdriveFolders[gdSensorType] || {}) : []
+  const gdYears = (gdriveFolders && gdSensorType && gdSite) ? Object.keys(gdriveFolders[gdSensorType]?.[gdSite] || {}) : []
+  const gdFolderTypes = (gdriveFolders && gdSensorType && gdSite && gdYear) ? Object.keys(gdriveFolders[gdSensorType]?.[gdSite]?.[gdYear] || {}) : []
+
+  const { data: gdriveFiles } = useQuery({
+    queryKey: ['gdrive-files', gdSensorType, gdSite, gdYear, gdFolderType],
+    queryFn: () => getGdriveFiles(gdSensorType, gdSite, gdYear, gdFolderType),
+    enabled: !!gdSensorType && !!gdSite && !!gdYear && !!gdFolderType,
+  })
+
   const isLoading = loadingRiver || loadingWells
   const fullData = effectiveTab === 'river' ? readings : wells
 
@@ -619,8 +643,94 @@ export default function App() {
 
             {/* Section 2: Google Drive Browser */}
             <div className="bg-stone-800/60 rounded-2xl p-5 border border-stone-700/50">
-              <h3 className="text-sm font-semibold text-amber-400 uppercase tracking-wider mb-4">Google Drive Browser</h3>
-              <p className="text-stone-500 text-sm">Coming next...</p>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold text-amber-400 uppercase tracking-wider">Google Drive Browser</h3>
+                <button
+                  onClick={async () => {
+                    if (!gdSite || !gdYear) return
+                    if (!confirm(`Run manual pipeline for ${gdSite} (${gdYear})?`)) return
+                    const res = await runManualPipeline(gdSite, gdYear)
+                    setActiveRunId(res.run_id)
+                  }}
+                  disabled={!gdSite || !gdYear}
+                  className="px-3 py-1.5 bg-green-700 hover:bg-green-600 disabled:bg-stone-700 disabled:text-stone-500 text-green-100 text-xs rounded-lg transition"
+                >
+                  Run Manual Pipeline
+                </button>
+              </div>
+
+              {/* Cascading dropdowns */}
+              <div className="grid grid-cols-4 gap-3 mb-4">
+                <div>
+                  <label className="block text-[11px] font-medium text-stone-500 uppercase tracking-wider mb-1">Type</label>
+                  <select
+                    className="w-full bg-stone-700 border border-stone-600 rounded-lg px-2 py-1.5 text-sm text-stone-100 focus:outline-none focus:border-amber-500 transition"
+                    value={gdSensorType}
+                    onChange={e => { setGdSensorType(e.target.value); setGdSite(''); setGdYear(''); setGdFolderType('') }}
+                  >
+                    <option value="">Select...</option>
+                    {gdSensorTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-stone-500 uppercase tracking-wider mb-1">Site</label>
+                  <select
+                    className="w-full bg-stone-700 border border-stone-600 rounded-lg px-2 py-1.5 text-sm text-stone-100 focus:outline-none focus:border-amber-500 transition"
+                    value={gdSite}
+                    onChange={e => { setGdSite(e.target.value); setGdYear(''); setGdFolderType('') }}
+                    disabled={!gdSensorType}
+                  >
+                    <option value="">Select...</option>
+                    {gdSites.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-stone-500 uppercase tracking-wider mb-1">Year</label>
+                  <select
+                    className="w-full bg-stone-700 border border-stone-600 rounded-lg px-2 py-1.5 text-sm text-stone-100 focus:outline-none focus:border-amber-500 transition"
+                    value={gdYear}
+                    onChange={e => { setGdYear(e.target.value); setGdFolderType('') }}
+                    disabled={!gdSite}
+                  >
+                    <option value="">Select...</option>
+                    {gdYears.map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-stone-500 uppercase tracking-wider mb-1">Folder</label>
+                  <select
+                    className="w-full bg-stone-700 border border-stone-600 rounded-lg px-2 py-1.5 text-sm text-stone-100 focus:outline-none focus:border-amber-500 transition"
+                    value={gdFolderType}
+                    onChange={e => setGdFolderType(e.target.value)}
+                    disabled={!gdYear}
+                  >
+                    <option value="">Select...</option>
+                    {gdFolderTypes.map(f => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* File list */}
+              {gdFolderType && gdriveFiles?.files?.length > 0 ? (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-stone-500 text-xs uppercase tracking-wider">
+                      <th className="pb-2">Filename</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gdriveFiles.files.map((f: any) => (
+                      <tr key={f.id} className="border-t border-stone-700/50">
+                        <td className="py-2 text-stone-200 font-mono text-xs">{f.name}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : gdFolderType ? (
+                <p className="text-stone-500 text-sm">No files in this folder.</p>
+              ) : (
+                <p className="text-stone-500 text-sm">Select a type, site, year, and folder to browse files.</p>
+              )}
             </div>
 
             {/* Section 3: Pipeline Runs */}
