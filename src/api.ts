@@ -38,3 +38,17 @@ export const getGdriveFolders = () =>
 
 export const getGdriveFiles = (sensorType: string, site: string, year: string, folderType: string) =>
   api.get('/api/gdrive-files', { params: { sensor_type: sensorType, site, year, folder_type: folderType } }).then(r => r.data)
+
+// Preview & Download
+
+export const getGdrivePreview = (fileId: string) =>
+  api.get('/api/gdrive-preview', { params: { file_id: fileId } }).then(r => r.data)
+
+export const getGdriveDownloadUrl = (fileId: string, filename: string) =>
+  `${api.defaults.baseURL}/api/gdrive-download?file_id=${fileId}&filename=${encodeURIComponent(filename)}`
+
+export const getS3Preview = (key: string) =>
+  api.get('/api/s3-preview', { params: { key } }).then(r => r.data)
+
+export const getS3DownloadUrl = (key: string) =>
+  `${api.defaults.baseURL}/api/s3-download?key=${encodeURIComponent(key)}`
