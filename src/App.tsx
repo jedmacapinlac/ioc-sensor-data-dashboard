@@ -20,6 +20,31 @@ function downsample<T>(data: T[], maxPoints: number): T[] {
   return result
 }
 
+/**
+ * Groups readings by Hour and averages all numeric columns.
+ *
+ * @param data Array of objects.
+ * @returns An array containing one averaged object per day.
+ */
+
+function aggregateByHour(data: any[]): any[] {
+  const groups: Record<string, any[]> = {}
+  for (const row of data) {
+    const hour = row.reading_datetime?.slice(0,13)
+    if (!hour) continue
+    if (!groups[hour]) groups[hour] = []
+    groups[hour].push(row)
+  }
+  return Object.entries(groups).map(([hour, rows]) => {
+    const result: any = {reading_datetime: hour}
+    const numericKeys = Object.keys(rows[0]).filter(k => k !== 'reading_datetime' && typeof rows[0][k] === 'number')
+    for (const key of numericKeys) {
+      const vals = rows.map(r => r[key]).filter((v: any) => v != null)
+      result[key] = vals.length ? vals.reduce((a: number, b: number) => a + b, 0) / vals.length : null
+    }
+    return result  })
+}
+
 function aggregateByDay(data: any[]): any[] {
   const groups: Record<string, any[]> = {}
   for (const row of data) {
@@ -62,6 +87,30 @@ function aggregateByWeek(data: any[]): any[] {
   })
 }
 
+
+const FLAG_COLUMNS = new Set([
+  'qc_flag_temperature', 'qc_flag_conductivity', 'qc_flag_level',
+  'qc_flag_specific_conductance', 'qc_flag_gw_elevation',
+  'qc_flag_temp_c_baro', 'qc_flag_temp_c_river',
+])
+
+const DATA_TO_FLAG: Record<string, string> = {
+  temperature_c: 'qc_flag_temperature',
+  compensated_level_m: 'qc_flag_level',
+  uncompensated_level_m: 'qc_flag_level',
+  specific_conductance_ms_cm: 'qc_flag_specific_conductance',
+  gw_elevation_masl: 'qc_flag_gw_elevation',
+  temp_c_river: 'qc_flag_temp_c_river',
+  temp_c_baro: 'qc_flag_temp_c_baro',
+  conductivity_us: 'qc_flag_conductivity',
+  stage_m: 'qc_flag_level',
+  level_m: 'qc_flag_level',
+}
+
+function FlaggedDot({ cx, cy, payload, flagKey }: any) {
+  if (!payload || payload[flagKey] !== 1) return null
+  return <circle cx={cx} cy={cy} r={4} fill="#ef4444" stroke="#991b1b" strokeWidth={1} />
+}
 
 function ChartCard({ title, children, color }: { title: string; children: React.ReactNode; color: string }) {
   return (
@@ -232,7 +281,7 @@ export default function App() {
     if (!fullData.length) return []
     switch (frequency) {
       case '15m': return fullData
-      case '1h': return fullData.filter((_: any, i: number) => i % 4 === 0)
+      case '1h': return aggregateByHour(fullData)
       case '1d': return aggregateByDay(fullData)
       case '1w': return aggregateByWeek(fullData)
       default: return fullData
@@ -417,6 +466,10 @@ export default function App() {
                   {effectiveTab === 'wells' ? 'Wells / Telemetered' : 'River / Combined'}
                   {activeData.length > 0 && ` — ${activeData.length.toLocaleString()} points`}
                   {fullData.length !== activeData.length && ` (${fullData.length.toLocaleString()} raw)`}
+                  {(() => {
+                    const flagged = fullData.filter((r: any) => Object.keys(r).some(k => FLAG_COLUMNS.has(k) && r[k] === 1)).length
+                    return flagged > 0 ? <span className="ml-2 text-red-400">({flagged} QC-flagged)</span> : null
+                  })()}
                 </p>
               </div>
               <p className="text-xs text-stone-400">{startDate} to {endDate}</p>
@@ -458,7 +511,7 @@ export default function App() {
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-stone-800">
                       <tr>
-                        {Object.keys(activeData[0]).filter(k => k !== 'sensor_id').map(col => (
+                        {Object.keys(activeData[0]).filter(k => k !== 'sensor_id' && !FLAG_COLUMNS.has(k)).map(col => (
                           <th key={col} className="px-4 py-3 text-left text-[11px] font-medium text-stone-400 uppercase tracking-wider whitespace-nowrap border-b border-stone-700">
                             {col}
                           </th>
@@ -468,11 +521,15 @@ export default function App() {
                     <tbody>
                       {activeData.map((row: any, i: number) => (
                         <tr key={i} className={i % 2 === 0 ? 'bg-stone-800/30' : ''}>
-                          {Object.entries(row).filter(([k]) => k !== 'sensor_id').map(([k, v]) => (
-                            <td key={k} className="px-4 py-2 text-stone-300 whitespace-nowrap border-b border-stone-800">
-                              {typeof v === 'number' ? v.toFixed(3) : String(v ?? '')}
-                            </td>
-                          ))}
+                          {Object.entries(row).filter(([k]) => k !== 'sensor_id' && !FLAG_COLUMNS.has(k)).map(([k, v]) => {
+                            const flagKey = DATA_TO_FLAG[k]
+                            const isFlagged = flagKey && row[flagKey] === 1
+                            return (
+                              <td key={k} className={`px-4 py-2 whitespace-nowrap border-b border-stone-800 ${isFlagged ? 'text-red-400 bg-red-950/40' : 'text-stone-300'}`}>
+                                {typeof v === 'number' ? v.toFixed(3) : String(v ?? '')}
+                              </td>
+                            )
+                          })}
                         </tr>
                       ))}
                     </tbody>
@@ -494,12 +551,30 @@ export default function App() {
                           <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                           <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
                           <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} labelFormatter={v => `${v}`} />
-                          <Area type="monotone" dataKey="compensated_level_m" stroke="#0284c7" fill="url(#levelGrad)" strokeWidth={1.5} dot={false} />
+                          <Area type="monotone" dataKey="compensated_level_m" stroke="#0284c7" fill="url(#levelGrad)" strokeWidth={1.5} dot={(props: any) => <FlaggedDot {...props} flagKey="qc_flag_level" />} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </ChartCard>
                   </div>
                   <DetailCard title="Comp. Level" dataKey="compensated_level_m" data={activeData} unit="m" color="text-sky-400" />
+                </div>
+
+                <div className="flex gap-4">
+                  <div className="flex-1">
+                    <ChartCard title="Uncompensated Level (m)" color="text-blue-400">
+                      <ResponsiveContainer width="100%" height={360}>
+                        <AreaChart data={chartData}>
+                          <defs><linearGradient id="ulevelGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3b82f6" stopOpacity={0.5} /><stop offset="100%" stopColor="#3b82f6" stopOpacity={0.05} /></linearGradient></defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
+                          <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
+                          <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
+                          <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} labelFormatter={v => `${v}`} />
+                          <Area type="monotone" dataKey="uncompensated_level_m" stroke="#3b82f6" fill="url(#ulevelGrad)" strokeWidth={1.5} dot={(props: any) => <FlaggedDot {...props} flagKey="qc_flag_level" />} />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </ChartCard>
+                  </div>
+                  <DetailCard title="Uncomp. Level" dataKey="uncompensated_level_m" data={activeData} unit="m" color="text-blue-400" />
                 </div>
 
                 <div className="flex gap-4">
@@ -512,7 +587,7 @@ export default function App() {
                           <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                           <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
                           <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
-                          <Area type="monotone" dataKey="temperature_c" stroke="#15803d" fill="url(#tempGrad)" strokeWidth={1.5} dot={false} />
+                          <Area type="monotone" dataKey="temperature_c" stroke="#15803d" fill="url(#tempGrad)" strokeWidth={1.5} dot={(props: any) => <FlaggedDot {...props} flagKey="qc_flag_temperature" />} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </ChartCard>
@@ -530,7 +605,7 @@ export default function App() {
                           <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                           <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
                           <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
-                          <Area type="monotone" dataKey="specific_conductance_ms_cm" stroke="#b45309" fill="url(#spcGrad)" strokeWidth={1.5} dot={false} />
+                          <Area type="monotone" dataKey="specific_conductance_ms_cm" stroke="#b45309" fill="url(#spcGrad)" strokeWidth={1.5} dot={(props: any) => <FlaggedDot {...props} flagKey="qc_flag_specific_conductance" />} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </ChartCard>
@@ -548,7 +623,7 @@ export default function App() {
                           <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                           <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
                           <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
-                          <Area type="monotone" dataKey="gw_elevation_masl" stroke="#2dd4bf" fill="url(#gwGrad)" strokeWidth={1.5} dot={false} baseValue="dataMin" />
+                          <Area type="monotone" dataKey="gw_elevation_masl" stroke="#2dd4bf" fill="url(#gwGrad)" strokeWidth={1.5} dot={(props: any) => <FlaggedDot {...props} flagKey="qc_flag_gw_elevation" />} baseValue="dataMin" />
                         </AreaChart>
                       </ResponsiveContainer>
                     </ChartCard>
@@ -589,12 +664,30 @@ export default function App() {
                           <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                           <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
                           <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} labelFormatter={v => `${v}`} />
-                          <Area type="monotone" dataKey="stage_m" stroke="#0284c7" fill="url(#stageGrad)" strokeWidth={1.5} dot={false} />
+                          <Area type="monotone" dataKey="stage_m" stroke="#0284c7" fill="url(#stageGrad)" strokeWidth={1.5} dot={(props: any) => <FlaggedDot {...props} flagKey="qc_flag_level" />} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </ChartCard>
                   </div>
                   <DetailCard title="Stage" dataKey="stage_m" data={activeData} unit="m" color="text-sky-400" />
+                </div>
+
+                <div className="flex gap-4">
+                  <div className="flex-1">
+                    <ChartCard title="Level (m)" color="text-blue-400">
+                      <ResponsiveContainer width="100%" height={360}>
+                        <AreaChart data={chartData}>
+                          <defs><linearGradient id="levelMGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3b82f6" stopOpacity={0.5} /><stop offset="100%" stopColor="#3b82f6" stopOpacity={0.05} /></linearGradient></defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#44403c" />
+                          <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
+                          <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
+                          <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} labelFormatter={v => `${v}`} />
+                          <Area type="monotone" dataKey="level_m" stroke="#3b82f6" fill="url(#levelMGrad)" strokeWidth={1.5} dot={(props: any) => <FlaggedDot {...props} flagKey="qc_flag_level" />} />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </ChartCard>
+                  </div>
+                  <DetailCard title="Level" dataKey="level_m" data={activeData} unit="m" color="text-blue-400" />
                 </div>
 
                 <div className="flex gap-4">
@@ -607,7 +700,7 @@ export default function App() {
                           <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                           <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
                           <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
-                          <Area type="monotone" dataKey="temp_c_river" stroke="#15803d" fill="url(#rtempGrad)" strokeWidth={1.5} dot={false} />
+                          <Area type="monotone" dataKey="temp_c_river" stroke="#15803d" fill="url(#rtempGrad)" strokeWidth={1.5} dot={(props: any) => <FlaggedDot {...props} flagKey="qc_flag_temp_c_river" />} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </ChartCard>
@@ -625,7 +718,7 @@ export default function App() {
                           <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                           <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
                           <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
-                          <Area type="monotone" dataKey="temp_c_baro" stroke="#059669" fill="url(#btempGrad)" strokeWidth={1.5} dot={false} />
+                          <Area type="monotone" dataKey="temp_c_baro" stroke="#059669" fill="url(#btempGrad)" strokeWidth={1.5} dot={(props: any) => <FlaggedDot {...props} flagKey="qc_flag_temp_c_baro" />} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </ChartCard>
@@ -643,7 +736,7 @@ export default function App() {
                           <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                           <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
                           <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
-                          <Area type="monotone" dataKey="specific_conductance_ms_cm" stroke="#b45309" fill="url(#rspcGrad)" strokeWidth={1.5} dot={false} />
+                          <Area type="monotone" dataKey="specific_conductance_ms_cm" stroke="#b45309" fill="url(#rspcGrad)" strokeWidth={1.5} dot={(props: any) => <FlaggedDot {...props} flagKey="qc_flag_specific_conductance" />} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </ChartCard>
