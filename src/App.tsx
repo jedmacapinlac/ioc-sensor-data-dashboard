@@ -21,9 +21,9 @@ function downsample<T>(data: T[], maxPoints: number): T[] {
 }
 
 /**
- * Groups readings by Hour and averages all numeric columns.
+ * Groups readings by hour and averages all numeric columns.
  *
- * @param data Array of objects.
+ * @param data - Array of objects.
  * @returns An array containing one averaged object per day.
  */
 
@@ -45,6 +45,13 @@ function aggregateByHour(data: any[]): any[] {
     return result  })
 }
 
+/**
+ * Groups readings by day and averages all numeric columns.
+ *
+ * @param data - Array of objects.
+ * @returns An array containing one averaged object per day.
+ */
+
 function aggregateByDay(data: any[]): any[] {
   const groups: Record<string, any[]> = {}
   for (const row of data) {
@@ -63,6 +70,13 @@ function aggregateByDay(data: any[]): any[] {
     return result
   })
 }
+
+/**
+ * Groups readings by week and averages all numeric columns.
+ *
+ * @param data - Array of objects.
+ * @returns An array containing one averaged object per day.
+ */
 
 function aggregateByWeek(data: any[]): any[] {
   const groups: Record<string, any[]> = {}
@@ -87,11 +101,10 @@ function aggregateByWeek(data: any[]): any[] {
   })
 }
 
-
 const FLAG_COLUMNS = new Set([
   'qc_flag_temperature', 'qc_flag_conductivity', 'qc_flag_level',
   'qc_flag_specific_conductance', 'qc_flag_gw_elevation',
-  'qc_flag_temp_c_baro', 'qc_flag_temp_c_river',
+  'qc_flag_temp_c_baro', 'qc_flag_temp_c_river', 'qc_flag_barometer'
 ])
 
 const DATA_TO_FLAG: Record<string, string> = {
@@ -105,12 +118,33 @@ const DATA_TO_FLAG: Record<string, string> = {
   conductivity_us: 'qc_flag_conductivity',
   stage_m: 'qc_flag_level',
   level_m: 'qc_flag_level',
+  barometer_mbar: 'qc_flag_barometer',
+  abs_pres_mbar: 'qc_flag_barometer'
 }
+
+/**
+ * Renders red dot on any point that is flagged as an outlier.
+ *
+ * @param cx pixel x corindate of point on chart.
+ * @param cy pixel y cordinate of point on chart.
+ * @param payload data for point 
+ * @param flagKey corresponding qc flag column
+ * @returns SVG element
+ */
 
 function FlaggedDot({ cx, cy, payload, flagKey }: any) {
   if (!payload || payload[flagKey] !== 1) return null
   return <circle cx={cx} cy={cy} r={4} fill="#ef4444" stroke="#991b1b" strokeWidth={1} />
 }
+
+/**
+ * Reusable styled wrapper for chart components.
+ *
+ * @param title - Chart heading displayed above the content.
+ * @param children - Chart content to render inside the card.
+ * @param color - Tailwind color class for the title.
+ * @returns JSX element
+ */
 
 function ChartCard({ title, children, color }: { title: string; children: React.ReactNode; color: string }) {
   return (
@@ -120,6 +154,17 @@ function ChartCard({ title, children, color }: { title: string; children: React.
     </div>
   )
 }
+
+/**
+ * Reusable styled wrapper for stat components.
+ *
+ * @param title - Card heading displayed above the stats.
+ * @param dataKey - Column name to pull values from.
+ * @param data - Array of reading row objects from the API.
+ * @param unit - Unit label displayed next to values (e.g., "m", "°C").
+ * @param color - Tailwind color class for the title and latest value.
+ * @returns JSX element, or null if no valid data exists for the dataKey.
+ */
 
 function DetailCard({ title, dataKey, data, unit, color }: { title: string; dataKey: string; data: any[]; unit: string; color: string }) {
   const values = data.map(r => ({ v: r[dataKey], dt: r.reading_datetime })).filter(r => r.v != null)
@@ -641,7 +686,7 @@ export default function App() {
                           <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                           <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
                           <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
-                          <Area type="monotone" dataKey="barometer_mbar" stroke="#78716c" fill="url(#baroGrad)" strokeWidth={1.5} dot={false} />
+                          <Area type="monotone" dataKey="barometer_mbar" stroke="#78716c" fill="url(#baroGrad)" strokeWidth={1.5} dot={(props: any) => <FlaggedDot {...props} flagKey="qc_flag_barometer" />} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </ChartCard>
@@ -754,7 +799,7 @@ export default function App() {
                           <XAxis dataKey="reading_datetime" tick={{ fontSize: 10, fill: '#78716c' }} tickFormatter={tickFormat} />
                           <YAxis tick={{ fontSize: 10, fill: '#78716c' }} domain={[(min: number) => min - (min * 0.002), 'dataMax']} tickFormatter={(v: number) => v.toFixed(3)} />
                           <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
-                          <Area type="monotone" dataKey="abs_pres_mbar" stroke="#78716c" fill="url(#rbaroGrad)" strokeWidth={1.5} dot={false} />
+                          <Area type="monotone" dataKey="abs_pres_mbar" stroke="#78716c" fill="url(#rbaroGrad)" strokeWidth={1.5} dot={(props: any) => <FlaggedDot {...props} flagKey="qc_flag_barometer" />} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </ChartCard>
